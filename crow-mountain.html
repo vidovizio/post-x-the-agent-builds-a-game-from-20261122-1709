@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comet Crow — Mountain Run</title>
+<style>
+  html,body{margin:0;height:100%;background:#050510;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:grid;place-items:center}
+  canvas{width:100%;height:100%;object-fit:contain;display:block}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="1920" height="1080"></canvas></div>
+<script>
+(() => {
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const W = 1920, H = 1080;
+
+  // ---------- deterministic rng ----------
+  let seed = 20261123;
+  function rnd() {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const rr = (a, b) => a + rnd() * (b - a);
+
+  // ---------- state ----------
+  const crow = { x: 430, y: H * 0.46, vy: 0, tilt: 0, flap: 0, hurt: 0 };
+  let shards = [], hazards = [], sparks = [], trail = [], stars = [], layers = [];
+  let t = 0, scroll = 0, score = 0, collected = 0, combo = 1, comboTimer = 0;
+  let speed = 380, spawnShard = 0.7, spawnHazard = 3.0;
+  let flash = 0, gameOver = false, best = 0;
+  const input = { up: false, down: false };
+
+  function makeStars() {
+    stars = [];
+    for (let i = 0; i < 190; i++) {
+      stars.push({ x: rnd() * W, y: rnd() * H * 0.62, r: rr(0.7, 2.3), tw: rnd() * 6.28, sp: rr(0.4, 1.6) });
+    }
+  }
+
+  function buildRidges(off) {
+    // fixed layer templates; regenerated with a stable seed offset only once
+    layers = [];
+    const defs = [
+      { baseY: H * 0.60, amp: 130, step: 190, top: '#232050', bot: '#191640', par: 0.22, snow: false },
+      { baseY: H * 0.72, amp: 175, step: 230, top: '#191540', bot: '#100e2c', par: 0.46, snow: true },
+      { baseY: H * 0.88, amp: 210, step: 280, top: '#0d0b22', bot: '#05040f', par: 0.92, snow: false }
+    ];
+    for (let li = 0; li < defs.length; li++) {
+      const d = defs[li];
+      const pts = [];
+      const shift = (off * d.par) % d.step;
+      for (let x = -d.step * 2; x <= W + d.step * 2; x += d.step) {
+        const wob = Math.sin((x + off * d.par) * 0.0016 + li * 2.1) * d.amp * 0.55;
+        const jag = Math.sin((x + off * d.par) * 0.0043 + li * 1.3) * d.amp * 0.45;
+        pts.push([x - shift, d.baseY + wob + jag]);
+      }
+      layers.push({ ...d, pts });
+    }
+  }
+
+  function reset() {
+    seed = 20261123;
+    crow.y = H * 0.46; crow.vy = 0; crow.tilt = 0; crow.flap = 0; crow.hurt = 0;
+    shards = []; hazards = []; sparks = []; trail = [];
+    t = 0; scroll = 0; score = 0; collected = 0; combo = 1; comboTimer = 0;
+    speed = 380; spawnShard = 0.7; spawnHazard = 3.0;
+    flash = 0; gameOver = false;
+    makeStars();
+    buildRidges(0);
+  }
+
+  function spawn(dt) {
+    if ((spawnShard -= dt) <= 0) {
+      const n = rnd() < 0.30 ? 3 : 1;
+      const y0 = rr(150, H * 0.74);
+      for (let i = 0; i < n; i++) {
+        shards.push({ x: W + 100 + i * 86, y: y0 + Math.sin(i * 1.1) * 54, ph: rr(0, 6.28) });
+      }
+      spawnShard = rr(0.62, 1.15);
+    }
+    if ((spawnHazard -= dt) <= 0) {
+      const h = rr(96, 168);
+      hazards.push({ x: W + 220, y: rr(170, H * 0.72), w: rr(190, 300), h, ph: rr(0, 6.28) });
+      spawnHazard = rr(2.0, 3.4);
+    }
+  }
+
+  function update(dt) {
+    if (gameOver) return;
+    t += dt;
+    speed = 380 + Math.min(300, t * 8);
+    scroll += speed * dt;
+
+    const acc = 2600;
+    if (input.up) crow.vy -= acc * dt;
+    if (input.down) crow.vy += acc * dt;
+    crow.vy *= Math.pow(0.0018, dt);
+    crow.vy += (H * 0.46 - crow.y) * 0.20 * dt;
+    crow.y += crow.vy * dt;
+    if (crow.y < 96) { crow.y = 96; crow.vy = 0; }
+    if (crow.y > H * 0.82) { crow.y = H * 0.82; crow.vy = 0; }
+    crow.tilt += ((crow.vy / 1000) - crow.tilt) * Math.min(1, dt * 8);
+    crow.flap += dt * (7 + Math.min(10, Math.abs(crow.vy) / 110));
+    if (crow.hurt > 0) crow.hurt -= dt;
+    flash = Math.max(0, flash - dt * 3);
+    if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) combo = 1; }
+
+    trail.push({ x: crow.x - 46, y: crow.y, a: 1 });
+    for (const p of trail) { p.x -= 280 * dt; p.a -= dt * 1.5; }
+    trail = trail.filter(p => p.a > 0);
+
+    spawn(dt);
+
+    for (const s of shards) {
+      s.x -= speed * dt;
+      s.ph += dt * 3.4;
+      if (Math.hypot(s.x - crow.x, s.y - crow.y) < 52) {
+        s.dead = true; collected++; comboTimer = 2.6;
+        combo = Math.min(9, combo + 1);
+        score += 10 * combo;
+        for (let i = 0; i < 18; i++) {
+          const a = rr(0, 6.28), sp = rr(70, 360);
+          sparks.push({ x: s.x, y: s.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, hue: rr(38, 56) });
+        }
+      }
+    }
+    shards = shards.filter(s => s.x > -140 && !s.dead);
+
+    for (const hz of hazards) {
+      hz.x -= speed * 0.95 * dt;
+      hz.ph += dt * 1.1;
+      const hitR = hz.w * 0.30;
+      const dx = hz.x - crow.x, dy = hz.y - crow.y;
+      const wob = Math.sin(hz.ph) * 10;
+      if (Math.hypot(dx, dy + wob) < hitR + 26 && crow.hurt <= 0) {
+        crow.hurt = 1.2; combo = 1; flash = 1;
+        score = Math.max(0, score - 20);
+        for (let i = 0; i < 22; i++) {
+          const a = rr(0, 6.28), sp = rr(80, 300);
+          sparks.push({ x: crow.x, y: crow.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, hue: rr(250, 285) });
+        }
+      }
+    }
+    hazards = hazards.filter(hz => hz.x > -360);
+
+    for (const s of sparks) {
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      s.vx *= Math.pow(0.06, dt); s.vy *= Math.pow(0.06, dt);
+      s.y += 40 * dt;
+      s.life -= dt * 1.5;
+    }
+    sparks = sparks.filter(s => s.life > 0);
+  }
+
+  // ---------- drawing ----------
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, W * 0.35, H);
+    g.addColorStop(0, '#070718');
+    g.addColorStop(0.42, '#151340');
+    g.addColorStop(0.72, '#241a4a');
+    g.addColorStop(1, '#3d2145');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    const mx = W * 0.80, my = H * 0.20;
+    const halo = ctx.createRadialGradient(mx, my, 12, mx, my, 380);
+    halo.addColorStop(0, 'rgba(255,244,206,0.26)');
+    halo.addColorStop(0.45, 'rgba(255,214,180,0.08)');
+    halo.addColorStop(1, 'rgba(255,214,180,0)');
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(mx, my, 380, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fdf5d4'; ctx.beginPath(); ctx.arc(mx, my, 66, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(214,198,158,0.30)';
+    ctx.beginPath(); ctx.arc(mx - 20, my - 15, 13, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 22, my + 9, 9, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 6, my - 30, 6, 0, 7); ctx.fill();
+
+    for (const s of stars) {
+      const a = 0.28 + 0.72 * Math.abs(Math.sin(s.tw + t * s.sp));
+      ctx.fillStyle = `rgba(222,232,255,${(a * 0.85).toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill();
+    }
+  }
+
+  function drawRidge(l) {
+    ctx.beginPath();
+    ctx.moveTo(-600, H + 80);
+    for (const [x, y] of l.pts) ctx.lineTo(x, y);
+    ctx.lineTo(W + 600, H + 80);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, l.baseY - 240, 0, H + 60);
+    g.addColorStop(0, l.top); g.addColorStop(1, l.bot);
+    ctx.fillStyle = g; ctx.fill();
+
+    // rim light along the crest
+    ctx.strokeStyle = 'rgba(160,180,255,0.16)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    l.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.stroke();
+
+    if (l.snow) {
+      ctx.save(); ctx.clip();
+      ctx.strokeStyle = 'rgba(214,226,255,0.13)';
+      ctx.lineWidth = 26; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      let open = false;
+      for (const [x, y] of l.pts) {
+        if (y < l.baseY - 60) { open ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), open = true); }
+        else open = false;
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawShard(s) {
+    const glow = ctx.createRadialGradient(s.x, s.y, 2, s.x, s.y, 70);
+    glow.addColorStop(0, 'rgba(255,206,110,0.90)');
+    glow.addColorStop(0.5, 'rgba(255,170,70,0.22)');
+    glow.addColorStop(1, 'rgba(255,150,50,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(s.x, s.y, 70, 0, 7); ctx.fill();
+
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(s.ph);
+    ctx.fillStyle = '#ffe9a8';
+    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(10, 0); ctx.lineTo(0, 20); ctx.lineTo(-10, 0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fffdf2';
+    ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(4.5, 0); ctx.lineTo(0, 11); ctx.lineTo(-4.5, 0); ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    const tg = ctx.createLinearGradient(s.x, s.y, s.x + 90, s.y);
+    tg.addColorStop(0, 'rgba(255,190,110,0.30)');
+    tg.addColorStop(1, 'rgba(255,190,110,0)');
+    ctx.strokeStyle = tg; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(s.x + 20, s.y); ctx.lineTo(s.x + 90, s.y); ctx.stroke();
+  }
+
+  function drawHazard(hz) {
+    const wob = Math.sin(hz.ph) * 10;
+    ctx.save();
+    ctx.translate(hz.x, hz.y + wob);
+    ctx.rotate(Math.sin(hz.ph * 0.6) * 0.14);
+
+    // warning bloom (hot red-orange, never gold)
+    const bloom = ctx.createRadialGradient(0, 0, 8, 0, 0, hz.w * 0.92);
+    bloom.addColorStop(0, 'rgba(255,70,40,0.30)');
+    bloom.addColorStop(0.55, 'rgba(190,30,70,0.14)');
+    bloom.addColorStop(1, 'rgba(150,20,60,0)');
+    ctx.fillStyle = bloom; ctx.beginPath(); ctx.arc(0, 0, hz.w * 0.92, 0, 7); ctx.fill();
+
+    // spiked void rock: reads as "do not touch"
+    const spikes = 13, R = hz.w * 0.42, r = hz.h * 0.30;
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const ang = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+      const rad = i % 2 === 0 ? R * (0.82 + 0.18 * Math.sin(i * 1.7)) : r;
+      const px = Math.cos(ang) * rad, py = Math.sin(ang) * rad * 0.92;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(0, -r * 0.3, 4, 0, 0, R);
+    g.addColorStop(0, '#4a1030');
+    g.addColorStop(0.55, '#26091f');
+    g.addColorStop(1, '#0b0413');
+    ctx.fillStyle = g; ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,132,72,0.95)';
+    ctx.lineWidth = 3.5; ctx.lineJoin = 'miter';
+    ctx.stroke();
+
+    // white-hot core slit
+    ctx.fillStyle = `rgba(255,196,120,${(0.55 + 0.35 * Math.sin(hz.ph * 4)).toFixed(3)})`;
+    ctx.beginPath(); ctx.ellipse(0, 0, r * 0.42, r * 0.20, 0, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawCrow() {
+    ctx.save();
+    ctx.translate(crow.x, crow.y);
+    ctx.rotate(crow.tilt * 0.45);
+    ctx.scale(1.26, 1.26);
+
+    for (const p of trail) {
+      const a = Math.pow(p.a, 2) * 0.20;
+      const dx = p.x - crow.x, dy = p.y - crow.y;
+      const k = Math.max(0.2, 1 + dx / 220);
+      ctx.fillStyle = `rgba(150,190,255,${a.toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(dx, dy, 4.6 * k, 0, 7); ctx.fill();
+    }
+
+    const halo = ctx.createRadialGradient(4, 0, 6, 4, 0, 96);
+    halo.addColorStop(0, 'rgba(120,170,255,0.26)');
+    halo.addColorStop(1, 'rgba(120,170,255,0)');
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(4, 0, 96, 0, 7); ctx.fill();
+
+    const flap = Math.sin(crow.flap) * 0.5 + 0.5;
+
+    // far wing
+    ctx.fillStyle = '#151b2e';
+    ctx.strokeStyle = 'rgba(150,195,255,0.40)'; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(2, -8);
+    ctx.quadraticCurveTo(-26, -52 - flap * 22, -62, -66 - flap * 30);
+    ctx.quadraticCurveTo(-42, -22, -14, 2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // body
+    const bg = ctx.createLinearGradient(0, -34, 0, 38);
+    bg.addColorStop(0, '#4a5678');
+    bg.addColorStop(0.55, '#333d5c');
+    bg.addColorStop(1, '#1b2236');
+    ctx.fillStyle = bg;
+    ctx.shadowColor = 'rgba(2,3,10,0.95)';
+    ctx.shadowBlur = 26;
+    ctx.strokeStyle = 'rgba(196,224,255,0.95)';
+    ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(30, -6);
+    ctx.quadraticCurveTo(6, -30, -14, -18);
+    ctx.quadraticCurveTo(-34, -12, -52, 2);
+    ctx.quadraticCurveTo(-30, 14, -12, 18);
+    ctx.quadraticCurveTo(10, 24, 30, 10);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // tail
+    ctx.fillStyle = '#141a2b';
+    ctx.beginPath();
+    ctx.moveTo(-44, -2); ctx.lineTo(-78, -14); ctx.lineTo(-70, 0);
+    ctx.lineTo(-78, 14); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // head
+    ctx.fillStyle = '#3b4767';
+    ctx.shadowColor = 'rgba(2,3,10,0.95)';
+    ctx.shadowBlur = 22;
+    ctx.beginPath(); ctx.arc(34, -24, 20, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(196,224,255,0.95)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(34, -24, 20, 0, 7); ctx.stroke();
+
+    // bill
+    ctx.fillStyle = '#f0b45e';
+    ctx.beginPath();
+    ctx.moveTo(50, -32); ctx.lineTo(88, -22); ctx.lineTo(80, -11); ctx.lineTo(48, -14);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,80,30,0.50)'; ctx.lineWidth = 1.4; ctx.stroke();
+
+    // eye
+    ctx.fillStyle = '#f8f4ff'; ctx.beginPath(); ctx.arc(40, -28, 6.2, 0, 7); ctx.fill();
+    ctx.fillStyle = '#08080f'; ctx.beginPath(); ctx.arc(41.8, -28, 3.1, 0, 7); ctx.fill();
+
+    // near wing
+    const wg = ctx.createLinearGradient(0, 0, -36, 76);
+    wg.addColorStop(0, '#36415f');
+    wg.addColorStop(1, '#151a2b');
+    ctx.fillStyle = wg;
+    ctx.strokeStyle = 'rgba(176,214,255,0.78)'; ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(10, -6);
+    ctx.quadraticCurveTo(2, 44 + flap * 30, -34, 70 + flap * 38);
+    ctx.quadraticCurveTo(-28, 30, -10, 10);
+    ctx.quadraticCurveTo(-2, 2, 10, -6);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    if (crow.hurt > 0) {
+      ctx.globalAlpha = Math.max(0, crow.hurt / 1.2) * 0.35;
+      ctx.fillStyle = '#ff5b6e';
+      ctx.beginPath(); ctx.arc(0, 0, 72, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  function drawSparks() {
+    for (const p of sparks) {
+      const a = Math.max(0, p.life);
+      ctx.fillStyle = `hsla(${p.hue},100%,72%,${a.toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.8 * Math.max(0.2, a), 0, 7); ctx.fill();
+    }
+  }
+
+  function drawHUD() {
+    ctx.save();
+    const scrim = ctx.createLinearGradient(0, 0, 0, 230);
+    scrim.addColorStop(0, 'rgba(4,5,14,0.70)');
+    scrim.addColorStop(1, 'rgba(4,5,14,0)');
+    ctx.fillStyle = scrim; ctx.fillRect(0, 0, W, 230);
+    ctx.textBaseline = 'middle';
+
+    ctx.font = '800 62px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+    ctx.fillStyle = 'rgba(244,247,255,0.98)';
+    ctx.fillText(String(score).padStart(4, '0'), 72, 92);
+
+    ctx.font = '700 23px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+    ctx.fillStyle = 'rgba(255,214,140,0.95)';
+    ctx.fillText('◆ ' + collected + ' SHARDS', 76, 152);
+
+    if (combo > 1) {
+      ctx.font = '800 44px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+      ctx.fillStyle = `rgba(255,208,120,${(0.75 + 0.25 * Math.sin(t * 9)).toFixed(3)})`;
+      ctx.fillText('x' + combo, 76, 208);
+      ctx.font = '700 18px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+      ctx.fillStyle = 'rgba(255,208,120,0.72)';
+      ctx.fillText('COMBO', 148, 214);
+    }
+
+    ctx.textAlign = 'right';
+    ctx.font = '700 24px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+    ctx.fillStyle = 'rgba(206,218,255,0.82)';
+    ctx.fillText('COMET CROW', W - 76, 84);
+    ctx.font = '600 18px ui-sans-serif, system-ui, "DejaVu Sans", sans-serif';
+    ctx.fillStyle = 'rgba(180,194,240,0.62)';
+    ctx.fillText('ONE PROMPT · ONE HTML FILE', W - 76, 120);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    buildRidges(scroll);
+    const back = layers.slice(0, 2), front = layers.slice(2);
+    for (const l of back) drawRidge(l);
+
+    for (const l of front) drawRidge(l);
+    for (const hz of hazards) drawHazard(hz);
+    for (const s of shards) drawShard(s);
+    drawCrow();
+    drawSparks();
+    drawHUD();
+
+    if (flash > 0) {
+      ctx.fillStyle = `rgba(255,90,90,${(flash * 0.15).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // ---------- autopilot (demo capture only) ----------
+  const AUTOPILOT = /[?&]auto/.test(location.search);
+  function pilot() {
+    let target = null, bestD = 1e9;
+    for (const s of shards) {
+      if (s.x < crow.x + 30) continue;
+      const d = s.x - crow.x;
+      if (d < bestD) { bestD = d; target = s; }
+    }
+    let want = H * 0.46;
+    if (target) want = target.y;
+    for (const hz of hazards) {
+      const dx = hz.x - crow.x;
+      if (dx > -30 && dx < 420 && Math.abs(hz.y - want) < hz.w * 0.40) {
+        want = hz.y + (crow.y > hz.y ? hz.w * 0.52 : -hz.w * 0.52);
+      }
+    }
+    want = Math.max(140, Math.min(H * 0.78, want));
+    input.up = crow.y > want + 10;
+    input.down = crow.y < want - 10;
+  }
+
+  // ---------- loop ----------
+  const STEP = 1 / 120;
+  let last = 0, acc = 0;
+  function frame(now) {
+    if (!last) last = now;
+    acc += Math.min(0.05, (now - last) / 1000);
+    last = now;
+    while (acc >= STEP) {
+      if (AUTOPILOT) pilot();
+      update(STEP);
+      acc -= STEP;
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  reset();
+  render();
+  if (!/[?&]capture/.test(location.search)) requestAnimationFrame(frame);
+
+  // ---------- capture API ----------
+  window.GAME = {
+    reset, render,
+    tick(n) {
+      n = n || 4;
+      for (let i = 0; i < n; i++) { if (AUTOPILOT) pilot(); update(STEP); }
+      render();
+      return { t, score, collected, combo };
+    },
+    step(sec) {
+      const n = Math.round(sec / STEP);
+      for (let i = 0; i < n; i++) { if (AUTOPILOT) pilot(); update(STEP); }
+      render();
+      return { t, score, collected, combo };
+    },
+    state() {
+      return {
+        t: +t.toFixed(2), score, collected, combo,
+        shards: shards.length, hazards: hazards.length,
+        y: +crow.y.toFixed(1), speed: Math.round(speed),
+        layers: layers.length
+      };
+    }
+  };
+})();
+</script>
+</body>
+</html>
