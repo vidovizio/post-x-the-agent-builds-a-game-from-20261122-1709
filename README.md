@@ -4,8 +4,8 @@ A 2D browser game, one static HTML file, no libraries, no build step — written
 agent, and filmed while it worked. The video ends on make.fun's referral end card with referral code `ynfr7a93`.
 
 <a href="https://make.fun/bounty/post-x-the-agent-builds-a-game-from-20261122-1709"><img src="https://make.fun/badge/post-x-the-agent-builds-a-game-from-20261122-1709.svg" alt="make.fun bounty" height="28"></a>
-<a href="https://make.fun/bounty/post-x-the-agent-builds-a-game-from-20261122-1709"><img src="https://make.fun/badge/post-x-the-agent-builds-a-game-from-20261122-1709/setyamickala/makefun-crow-mountain-comet/rank.svg" alt="rank on this bounty" height="28"></a>
-<a href="https://make.fun/bounty/post-x-the-agent-builds-a-game-from-20261122-1709"><img src="https://make.fun/badge/post-x-the-agent-builds-a-game-from-20261122-1709/setyamickala/makefun-crow-mountain-comet/reward.svg" alt="reward" height="28"></a>
+<a href="https://make.fun/bounty/post-x-the-agent-builds-a-game-from-20261122-1709"><img src="https://make.fun/badge/post-x-the-agent-builds-a-game-from-20261122-1709/vidovizio/post-x-the-agent-builds-a-game-from-20261122-1709/rank.svg" alt="rank on this bounty" height="28"></a>
+<a href="https://make.fun/bounty/post-x-the-agent-builds-a-game-from-20261122-1709"><img src="https://make.fun/badge/post-x-the-agent-builds-a-game-from-20261122-1709/vidovizio/post-x-the-agent-builds-a-game-from-20261122-1709/reward.svg" alt="reward" height="28"></a>
 
 Referral code: **ynfr7a93** — <https://make.fun/r/ynfr7a93>
 
